@@ -84,6 +84,32 @@ async def onec_hs(request: Request):
     return PlainTextResponse("not found", status_code=404)
 
 
+ONEC_SUMMARY = {"revenue_month": 4520000.5, "cash_total": 812340.0, "stock_value": 9876543.21}
+ONEC_SUMMARY_CALLS = {"n": 0}  # только для автотеста кэша: считает реальные обращения к «/summary»
+
+
+async def onec_hs_summary(request: Request):
+    """Эмулирует метод «/summary» будущего расширения 1С (см. ТЗ-1С-HTTP-сервисы.md)."""
+    ONEC_SUMMARY_CALLS["n"] += 1
+    what = request.path_params["what"]
+    if what == "slow":
+        await asyncio.sleep(1.5)
+        what = "ok"
+    if what == "ok":
+        return JSONResponse(ONEC_SUMMARY)
+    if what == "empty":
+        return JSONResponse({"revenue_month": None, "cash_total": None, "stock_value": None})
+    if what == "noaccess":
+        return PlainTextResponse("Forbidden", status_code=403)
+    if what == "err500":
+        return PlainTextResponse("Internal error", status_code=500)
+    if what == "badjson":
+        return PlainTextResponse("{не json", status_code=200, media_type="application/json")
+    if what == "notdict":
+        return JSONResponse([1, 2, 3])
+    return PlainTextResponse("not found", status_code=404)
+
+
 async def bitrix(request: Request):
     if request.path_params["code"] == BITRIX_CODE:
         return JSONResponse({"result": {"ID": "1", "NAME": "Иван", "LAST_NAME": "Петров", "ADMIN": True}})
@@ -214,12 +240,19 @@ async def root(request: Request):
     return JSONResponse({"fake": True}, status_code=404)
 
 
+async def debug_onec_summary_calls(request: Request):
+    """Только для автотеста кэша: сколько раз реально дошли до «/summary» (проверка, что кэш не дырявый)."""
+    return JSONResponse(dict(ONEC_SUMMARY_CALLS))
+
+
 def build_app() -> Starlette:
     return Starlette(routes=[
         Route("/", root),
+        Route("/debug/onec-summary-calls", debug_onec_summary_calls),
         Route("/{prefix}/{mode}/odata/standard.odata/", onec),
         Route("/{prefix}/{mode}/odata/standard.odata", onec),
         Route("/{prefix}/{mode}/hs/{what}", onec_hs),
+        Route("/{prefix}/{mode}/hs/{what}/summary", onec_hs_summary),
         Route("/rest/1/{code}/profile.json", bitrix),
         Route("/o/oauth2/auth", g_auth),
         Route("/token", g_token, methods=["POST"]),

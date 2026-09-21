@@ -87,7 +87,7 @@ def seed() -> None:
                          "google_client_id": "demo-client-id.apps.googleusercontent.com", "google_client_secret": "gsecret-abcdef123456"})
     one = {"username": "Админ", "password": "пароль123", "use_odata": "1", "verify_ssl": "1", "http_service_path": ""}
     conns = [
-        ("onec", "1С:Комплексная автоматизация", {**one, "base_url": f"{FAKE}/ka/ok"}),
+        ("onec", "1С:Комплексная автоматизация", {**one, "base_url": f"{FAKE}/ka/ok", "http_service_path": "hs/ok"}),
         ("onec", "1С (тестовая база — не опубликован OData)", {**one, "base_url": f"{FAKE}/ka/nopublish"}),
         ("bitrix24", "Битрикс24", {"webhook_url": f"{FAKE}/rest/1/{fk.BITRIX_CODE}/"}),
         ("wildberries", "Wildberries — ИП Иванов", {"token": fk.WB_GOOD}),
@@ -130,6 +130,8 @@ CHEATSHEET = """
                варианты сбоев — вместо «ok» впишите:  nopublish (OData не включён)  slow (тормозит 3 с)
                err500 (ошибка 1С)  gateway (шлюз)  html (не 1С)  noaccess (нет прав)
                самоподписанный https:  https://127.0.0.1:9211/ka/ok  (проверьте галочку «проверять сертификат»)
+               путь к HTTP-сервису расширения (свод по деньгам на обзоре): hs/ok — считает; hs/empty — пусто;
+               hs/noaccess — нет прав; hs/err500 — ошибка 1С; hs/slow — тормозит 1,5 с; оставить пустым — расширение не настроено
    Битрикс24   http://127.0.0.1:9210/rest/1/abc123def456/
    Telegram    123456789:AAE_test_token_abcdefghijklmnopqrstuvwxyz
    MAX         max-good-token-1234567890

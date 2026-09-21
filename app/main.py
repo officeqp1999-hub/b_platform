@@ -25,6 +25,7 @@ from starlette.templating import Jinja2Templates
 
 from . import auth, backup, config, connectors, crypto, diagnostics, forms, settings_schema, store
 from .connectors import google as google_conn
+from .connectors import one_c_data
 from .connectors.base import Ctx as CheckCtx
 from .connectors.base import explain_exception, http
 
@@ -256,6 +257,22 @@ def _checklist() -> list[dict]:
     return [{"title": t, "href": h, "done": bool(d)} for t, h, d in items]
 
 
+def _primary_onec_connection() -> Optional[dict]:
+    """Включённая база 1С для карточки «Финансы». Пока баз обычно одна; если их несколько —
+    берём первую созданную (по id), а не первую по имени: имя может быть каким угодно
+    («тестовая», «резервная»...) и не должно решать, откуда брать деньги на обзор."""
+    conns = [c for c in store.list_connections() if c["type"] == "onec" and c["enabled"]]
+    return min(conns, key=lambda c: c["id"]) if conns else None
+
+
+async def _finance_summary() -> Optional[one_c_data.DataResult]:
+    conn = _primary_onec_connection()
+    if conn is None:
+        return None
+    cfg, _ = store.plain_config(conn)
+    return await one_c_data.finance_summary(conn["id"], cfg)
+
+
 @guarded("overview.view")
 async def overview(r: Req) -> Response:
     data: dict[str, Any] = {}
@@ -277,15 +294,24 @@ async def overview(r: Req) -> Response:
         data["event_stats"] = store.event_stats()
     if auth.can(r.user, "settings.view"):
         data["checklist"] = _checklist()
+    if auth.can(r.user, "finance.view"):
+        # сами цифры страница обзора не запрашивает: свежий запрос к 1С может быть медленным
+        # (база недоступна, сеть тормозит), а обзор должен открываться мгновенно всегда.
+        # Числа подгружает app.js через /api/finance/summary после отрисовки страницы.
+        data["finance_connected"] = _primary_onec_connection() is not None
     return render(r, "overview.html", nav_active="overview", **data)
 
 
 @guarded("finance.view")
 async def api_finance(r: Req) -> Response:
-    # Заглушка для второго этапа: реальные цифры появятся после выгрузки из 1С.
-    return JSONResponse({"status": "not_connected",
-                         "message": "Финансовые показатели появятся после подключения 1С (этап 2).",
-                         "revenue": None, "cash": None})
+    result = await _finance_summary()
+    if result is None:
+        return JSONResponse({"status": "off", "message": "Финансовые показатели появятся после подключения 1С.",
+                             "action": "", "cached": False, "revenue_month": None, "cash_total": None, "stock_value": None})
+    payload = {"status": result.status, "message": result.message, "action": result.action, "cached": result.cached,
+              "revenue_month": None, "cash_total": None, "stock_value": None}
+    payload.update(result.data)
+    return JSONResponse(payload)
 
 
 # ---------------------------------------------------------------------------
@@ -423,6 +449,7 @@ async def connection_detail(r: Req) -> Response:
         store.update_connection(conn_id, name, res.values)
     except store.StoreError as exc:
         return _conn_page(r, ctype, conn, _form_view(ctype, plain, res.values), name=name, form_error=str(exc), status=409)
+    one_c_data.invalidate(conn_id)
     store.log_event("info", "connections", f"Изменено подключение «{name}» ({ctype.title}).", user=r.user["login"])
     for n in res.notes:
         flash(r, "info", n)
@@ -447,6 +474,7 @@ async def connection_toggle(r: Req) -> Response:
     conn = store.get_connection(conn_id)
     if conn:
         store.set_connection_enabled(conn_id, not conn["enabled"])
+        one_c_data.invalidate(conn_id)
         store.log_event("info", "connections", f"Подключение «{conn['name']}» {'отключено' if conn['enabled'] else 'включено'}.", user=r.user["login"])
         flash(r, "ok", "Подключение " + ("отключено." if conn["enabled"] else "включено."))
     return redirect(f"/connections/{conn_id}")
@@ -458,6 +486,7 @@ async def connection_delete(r: Req) -> Response:
     conn = store.get_connection(conn_id)
     if conn:
         store.delete_connection(conn_id)
+        one_c_data.invalidate(conn_id)
         store.log_event("warning", "connections", f"Удалено подключение «{conn['name']}».", user=r.user["login"])
         flash(r, "ok", f"Подключение «{conn['name']}» удалено.")
     return redirect("/connections")

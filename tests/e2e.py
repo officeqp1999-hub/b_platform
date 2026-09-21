@@ -299,6 +299,122 @@ def scenario_1c(admin: Browser) -> None:
     check(r.status_code == 409 and "уже есть" in text_of(r), "повтор названия — отказ")
 
 
+def _save_onec(admin: Browser, cid: int, name: str, http_service_path: str) -> httpx.Response:
+    return admin.post(f"/connections/{cid}", {"name": name, "f_base_url": f"{FAKE}/ka/ok", "f_username": "Админ",
+                                               "f_password": "", "f_use_odata": "1", "f_verify_ssl": "1",
+                                               "f_http_service_path": http_service_path, "action": "save_check"})
+
+
+def scenario_1c_finance(admin: Browser) -> None:
+    section("2b. Свод по деньгам из 1С: HTTP-сервис расширения, кэш, лимит запросов")
+    name = "1С КА — основная + тест & Ко"
+    cid = conn_id(name)
+
+    b = admin.get("/api/finance/summary").json()
+    check(b["status"] == "warn" and "путь к нему" in b["message"], "без пути к HTTP-сервису — «внимание», без обращения к 1С", b)
+    check(b["revenue_month"] is None and b["cash_total"] is None and b["stock_value"] is None and b["cached"] is False,
+          "…и все три числа пустые, кэш ни при чём", b)
+
+    # прописываем путь к расширению, которое умеет считать свод (см. ТЗ-1С-HTTP-сервисы.md)
+    _save_onec(admin, cid, name, "hs/ok")
+    b1 = admin.get("/api/finance/summary").json()
+    check(b1["status"] == "ok" and b1["cached"] is False, "первый запрос свода получен из 1С, не из кэша", b1)
+    check(b1["revenue_month"] == 4520000.5 and b1["cash_total"] == 812340.0 and abs(b1["stock_value"] - 9876543.21) < 1e-6,
+          "числа переданы из 1С без искажений", b1)
+
+    b2 = admin.get("/api/finance/summary").json()
+    check(b2["cached"] is True and b2["revenue_month"] == b1["revenue_month"],
+          "повторный запрос — из кэша (открытие обзора несколькими сотрудниками не бьёт в 1С каждый раз)", b2)
+
+    # сама страница обзора цифры не запрашивает (чтобы медленная 1С её не тормозила) — она рендерится
+    # мгновенно с местом под них, а числа (уже проверенные выше через /api/finance/summary) подгружает app.js
+    page = admin.get("/").text
+    check('id="finance"' in page and "data-finance-live" in page,
+          "обзор рендерится сразу, с местом под цифры из 1С (их подгружает app.js)")
+
+    # смена настроек подключения должна сразу сбрасывать кэш — иначе сисадмин почти минуту видел бы старые цифры
+    _save_onec(admin, cid, name, "hs/empty")
+    b3 = admin.get("/api/finance/summary").json()
+    check(b3["status"] == "warn" and b3["cached"] is False and "пуст" in b3["message"],
+          "после смены настроек кэш сброшен: видно новое состояние сразу, а не через 45 секунд", b3)
+
+    for path, expect_status, must in [
+        ("hs/noaccess", "error", "не хватает прав"),
+        ("hs/err500", "error", "ошибку при расчёте"),
+        ("hs/missing", "warn", "не считает свод"),
+        ("hs/badjson", "error", "не в формате JSON"),
+        ("hs/notdict", "error", "неожиданными данными"),
+    ]:
+        _save_onec(admin, cid, name, path)
+        b = admin.get("/api/finance/summary").json()
+        check(b["status"] == expect_status and must in b["message"], f"{path}: {b['message'][:200]}", b)
+
+    _save_onec(admin, cid, name, "hs/ok")  # рабочее состояние — для дальнейших сценариев
+
+
+def scenario_1c_finance_cache_internals(admin: Browser) -> None:
+    section("2c. Кэш и защита 1С от параллельных запросов (прямая проверка модуля)")
+    setup_app_env()
+    os.environ["PLATFORMA_ONEC_CACHE_TTL"] = "1"
+    os.environ["PLATFORMA_ONEC_MAX_CONCURRENT"] = "2"
+    from app.connectors import one_c_data
+
+    cfg = {"base_url": f"{FAKE}/ka/ok", "username": "Админ", "password": "пароль123",
+           "http_service_path": "hs/ok", "verify_ssl": "1"}
+
+    async def ttl_check():
+        r1 = await one_c_data.finance_summary(900001, cfg)
+        r2 = await one_c_data.finance_summary(900001, cfg)
+        await asyncio.sleep(1.2)
+        r3 = await one_c_data.finance_summary(900001, cfg)
+        return r1, r2, r3
+
+    r1, r2, r3 = asyncio.run(ttl_check())
+    check(r1.cached is False and r2.cached is True, "второй вызов подряд для той же базы — из кэша, не новый запрос к 1С")
+    check(r3.cached is False and r3.data == r1.data, "кэш живёт не дольше отведённого срока, потом сам обновляется")
+
+    # правка настроек, начатая, пока уже шёл запрос к 1С со старыми настройками: результат
+    # этого запроса не должен лечь в кэш поверх правки (иначе почти минуту видны старые данные)
+    async def race_check():
+        slow = {**cfg, "http_service_path": "hs/slow"}
+        task = asyncio.ensure_future(one_c_data.finance_summary(900010, slow))
+        await asyncio.sleep(0.2)  # запрос уже в пути (fake-сервис отвечает через 1,5 с)
+        one_c_data.invalidate(900010)  # сисадмин в этот момент сохранил другие настройки
+        await task
+        return await one_c_data.finance_summary(900010, {**cfg, "http_service_path": "hs/empty"})
+
+    after_race = asyncio.run(race_check())
+    check(after_race.status == "warn" and after_race.cached is False,
+          "запрос, начатый до правки настроек, не затирает в кэше уже новые (после invalidate) данные")
+
+    # дедупликация: несколько запросов ЗА ОДИН И ТОТ ЖЕ свод одной базы, пока первый ещё не
+    # ответил, не долбят в 1С каждый по-своему, а ждут единственный уже идущий запрос
+    before = httpx.get(f"{FAKE}/debug/onec-summary-calls", trust_env=False).json()["n"]
+    slow_cfg = {**cfg, "http_service_path": "hs/slow"}
+
+    async def dedup_check():
+        return await asyncio.gather(*[one_c_data.finance_summary(900002, slow_cfg) for _ in range(5)])
+
+    results = asyncio.run(dedup_check())
+    after = httpx.get(f"{FAKE}/debug/onec-summary-calls", trust_env=False).json()["n"]
+    check(all(r.status == "ok" for r in results), "все 5 одновременных запросов за один и тот же свод получили результат")
+    check(after - before == 1, f"…но в 1С ушёл только один запрос, остальные дождались его ответа (было +{after - before})")
+
+    # а вот сам лимит одновременных запросов (MAX_CONCURRENT_REQUESTS=2) проверяем в обход кэша —
+    # напрямую через _fetch_summary, иначе описанная выше дедупликация схлопнёт всё в один запрос
+    # и лимит окажется недостижим и, соответственно, непроверяем
+    async def limit_check():
+        return await asyncio.gather(*[one_c_data._fetch_summary(900003, slow_cfg) for _ in range(4)])
+
+    t0 = time.monotonic()
+    raw_results = asyncio.run(limit_check())
+    took = time.monotonic() - t0
+    check(all(r.status == "ok" for r in raw_results), "все 4 прямых (без кэша) запроса к «медленной» сводке дошли и посчитались")
+    check(1.4 * 2 <= took < 1.4 * 4,
+          f"лимит (2) реально ограничивает: 4 запроса по 1,5 с идут в 2 захода, а не разом и не по одному ({took:.1f} с)",
+          f"{took:.1f}")
+
+
 def scenario_bitrix_mask(admin: Browser) -> None:
     section("3. Битрикс24 и маска секрета")
     hook = f"{FAKE}/rest/1/{fk.BITRIX_CODE}/"
@@ -736,6 +852,8 @@ def main() -> int:
         admin = Browser()
         scenario_login(admin)
         scenario_1c(admin)
+        scenario_1c_finance(admin)
+        scenario_1c_finance_cache_internals(admin)
         scenario_bitrix_mask(admin)
         scenario_tokens(admin)
         scenario_single(admin)
