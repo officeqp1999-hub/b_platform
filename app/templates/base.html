@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{% block title %}{{ config.APP_NAME }}{% endblock %} — {{ config.APP_NAME }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+{% import "_macros.html" as m with context %}
+<div class="shell {{ '' if user else 'noside' }}">
+  {% if user %}
+  <aside class="sidebar">
+    <div class="brand">{{ config.APP_NAME }}<small>{{ company_name }}</small></div>
+    <nav class="nav" aria-label="Разделы">
+      {% for key, title, href in nav %}
+        <a href="{{ href }}" class="{{ 'active' if nav_active == key }}">{{ title }}</a>
+      {% endfor %}
+    </nav>
+    <div class="userbox">
+      <div class="who">{{ user.full_name or user.login }}</div>
+      <div class="role">{{ user.role|role_ru }}</div>
+      <div class="mt-s"><a href="/password">Сменить пароль</a></div>
+      <form method="post" action="/logout" accept-charset="utf-8">{{ m.csrf_field() }}<button class="btn small" type="submit">Выйти</button></form>
+    </div>
+  </aside>
+  {% endif %}
+  <main class="content">
+    {% if default_admin_pending %}
+      <div class="banner" role="alert">Пароль администратора не сменён: сейчас это admin / admin. Смените его — <a href="/password">сменить пароль</a>.</div>
+    {% endif %}
+    {% for f in flashes %}
+      <div class="flash {{ f.kind }}" role="status">{{ f.text }}</div>
+    {% endfor %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+</body>
+</html>

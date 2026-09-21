@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Вход{% endblock %}
+{% block content %}
+<div class="card login-card">
+  <h1>{{ config.APP_NAME }}</h1>
+  <p class="muted">Войдите, чтобы открыть панель управления.</p>
+  {% if error %}<div class="flash error" role="alert">{{ error }}</div>{% endif %}
+  {% if first_run %}
+    <div class="flash info">Первый запуск. Логин: <b>admin</b>, пароль: <b>admin</b>. После входа система попросит придумать новый пароль.</div>
+  {% endif %}
+  <form method="post" action="/login" accept-charset="utf-8">
+    <input type="hidden" name="next" value="{{ next }}">
+    <div class="field">
+      <label for="login">Логин</label>
+      <input type="text" id="login" name="login" value="{{ login_value }}" autocomplete="username" autofocus required>
+    </div>
+    <div class="field">
+      <label for="password">Пароль</label>
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
+    </div>
+    <button class="btn primary w-full" type="submit">Войти</button>
+  </form>
+</div>
+{% endblock %}

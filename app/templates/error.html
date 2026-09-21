@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>{{ title }}</h1></div></div>
+<div class="card maxw-md">
+  <p>{{ message }}</p>
+  {% if action %}<div class="todo error"><b>Что делать:</b> {{ action }}</div>{% endif %}
+  <div class="form-actions"><a class="btn" href="/">На главную</a></div>
+</div>
+{% endblock %}

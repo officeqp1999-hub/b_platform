@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block title %}Сотрудники{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Сотрудники</h1><p>Кто может входить в панель и пользоваться ботом, и что кому видно.</p></div>
+  {% if can('users.manage') %}<div class="actions"><a class="btn primary" href="/users/new">Добавить сотрудника</a></div>{% endif %}
+</div>
+<div class="card">
+  <div class="table-wrap"><table>
+    <thead><tr><th>Сотрудник</th><th>Логин</th><th>Роль</th><th>Бот</th><th>Последний вход</th><th></th></tr></thead>
+    <tbody>
+    {% for u in users %}
+      <tr>
+        <td><strong>{{ u.full_name or '—' }}</strong>{% if not u.is_active %} <span class="badge s-off">отключён</span>{% endif %}</td>
+        <td>{{ u.login }}</td>
+        <td><span class="badge role">{{ u.role|role_ru }}</span></td>
+        <td class="small">{% if u.max_user_id %}MAX: {{ u.max_user_id }}<br>{% endif %}{% if u.telegram_id %}Telegram: {{ u.telegram_id }}{% endif %}{% if not u.max_user_id and not u.telegram_id %}<span class="muted">не привязан</span>{% endif %}</td>
+        <td class="small muted">{{ u.last_login_at|dt }}</td>
+        <td class="right"><a href="/users/{{ u.id }}">{{ 'Изменить' if can('users.manage') else 'Открыть' }}</a></td>
+      </tr>
+    {% endfor %}
+    </tbody></table></div>
+</div>
+<div class="card">
+  <h2>Что видит каждая роль</h2>
+  <ul class="list">
+    {% for key, title in ROLES.items() %}
+      <li><span class="badge role">{{ title }}</span><span>{{ role_desc[key] }}</span></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endblock %}

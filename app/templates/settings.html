@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block title %}Настройки{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Настройки</h1><p>Всё настраивается здесь, править файлы не нужно.</p></div></div>
+{% if form_error %}<div class="flash error" role="alert">{{ form_error }}</div>{% endif %}
+
+<form method="post" action="/settings" accept-charset="utf-8">
+  {{ m.csrf_field() }}
+  {% for s in sections %}
+    <div class="card" {% if s.title.startswith('Google') %}id="google"{% endif %}>
+      <h2>{{ s.title }}</h2>
+      <p class="muted">{{ s.desc }}</p>
+      {% for f in s.fields %}{{ m.field(f, s.view[f.name], errors.get(f.name, ''), not can('settings.manage'), 's') }}{% endfor %}
+      {% if s.title.startswith('Google') %}
+        <div class="field"><label for="ruri">Адрес возврата для Google Cloud</label>
+          <div class="copybox"><input type="text" id="ruri" value="{{ redirect_uri }}" readonly><button class="btn" type="button" data-copy="#ruri">Копировать</button></div>
+          <div class="help">Добавьте этот адрес в «Разрешённые URI перенаправления» вашего OAuth-клиента. Google принимает только https с доменом или http://localhost.</div></div>
+      {% endif %}
+    </div>
+  {% endfor %}
+  {% if can('settings.manage') %}<div class="form-actions"><button class="btn primary" type="submit">Сохранить настройки</button></div>{% endif %}
+</form>
+
+<div class="card mt-m">
+  <h2>Резервные копии</h2>
+  <p>Папка: <span class="mono">{{ backup_dir }}</span>. {% if backup_count %}Копий: {{ backup_count }}, последняя: {{ backup_last }}.{% else %}Копий пока нет.{% endif %}</p>
+  <p class="help">В копию попадают база, ключ шифрования и файл .env. Она содержит секреты — храните её в защищённом месте. Регулярную копию делает резервная-копия.bat (см. ИНСТРУКЦИЮ).</p>
+  {% if can('settings.manage') %}
+  <form method="post" action="/settings/backup" accept-charset="utf-8" data-busy="1">{{ m.csrf_field() }}
+    <button class="btn" type="submit" data-busy-label="Делаю копию…">Сделать копию сейчас</button></form>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Защищённое соединение (https)</h2>
+  {% if scheme == 'https' or https_files %}
+    <p><span class="badge s-ok">● Включено</span> Панель работает по https.</p>
+  {% else %}
+    <p><span class="badge s-warn">▲ Не включено</span> Панель работает по обычному http: пароли идут по сети открытым текстом.</p>
+  {% endif %}
+  <p class="help">Как включить: положите файлы <code>cert.pem</code> (сертификат) и <code>key.pem</code> (ключ) в папку <code>data\ssl</code> и перезапустите панель (остановить.bat → запустить.bat). Подробности — в ИНСТРУКЦИИ, раздел «Доступ снаружи».</p>
+</div>
+
+{% if can('settings.manage') %}
+<div class="card">
+  <h2>Журнал</h2>
+  <form method="post" action="/settings/cleanup" accept-charset="utf-8" data-confirm="Удалить записи журнала старше срока хранения?">{{ m.csrf_field() }}
+    <button class="btn" type="submit">Очистить старые записи сейчас</button></form>
+  <p class="help">Обычно это делается автоматически раз в сутки.</p>
+</div>
+{% endif %}
+{% endblock %}

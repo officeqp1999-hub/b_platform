@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block title %}{{ 'Сотрудник' if target else 'Новый сотрудник' }}{% endblock %}
+{% block content %}
+{% set ro = readonly|default(false) %}
+<div class="page-head"><div><h1>{{ (target.full_name or target.login) if target else 'Новый сотрудник' }}</h1></div><a class="btn" href="/users">К списку</a></div>
+<form method="post" accept-charset="utf-8" action="{{ '/users/' ~ target.id if target else '/users/new' }}">
+  {{ m.csrf_field() }}
+  <div class="card maxw-md">
+    <div class="field"><label for="full_name">Имя и фамилия<span class="req">*</span></label>
+      <input type="text" id="full_name" name="full_name" value="{{ values.full_name }}" class="{{ 'invalid' if errors.full_name }}" autocomplete="off" {% if ro %}readonly{% endif %}>
+      {% if errors.full_name %}<div class="err-text" role="alert">{{ errors.full_name }}</div>{% endif %}</div>
+    <div class="field"><label for="login">Логин<span class="req">*</span></label>
+      <input type="text" id="login" name="login" value="{{ values.login }}" class="{{ 'invalid' if errors.login }}" autocomplete="off" {% if ro %}readonly{% endif %}>
+      {% if errors.login %}<div class="err-text" role="alert">{{ errors.login }}</div>{% endif %}
+      <div class="help">Латиницей, без пробелов, например ivanov.</div></div>
+    <div class="field"><label for="role">Роль<span class="req">*</span></label>
+      <select id="role" name="role" class="{{ 'invalid' if errors.role }}" {% if ro %}disabled{% endif %}>
+        {% for key, title in ROLES.items() %}<option value="{{ key }}" {% if values.role == key %}selected{% endif %}>{{ title }}</option>{% endfor %}
+      </select>
+      {% if errors.role %}<div class="err-text" role="alert">{{ errors.role }}</div>{% endif %}
+      <div class="help">Менеджеру финансы не показываются: ни в панели, ни (позже) в ответах бота. Подробно — в таблице ролей на странице «Сотрудники».</div></div>
+    {% if not ro %}
+    <div class="field"><label for="password">{{ 'Новый пароль' if target else 'Пароль' }}{% if not target %}<span class="req">*</span>{% endif %}</label>
+      <input type="password" id="password" name="password" autocomplete="new-password" class="{{ 'invalid' if errors.password }}"
+             placeholder="{{ 'Оставьте пустым — не менять' if target else '' }}">
+      {% if errors.password %}<div class="err-text" role="alert">{{ errors.password }}</div>{% endif %}
+      <div class="help">Не меньше 8 символов. Передайте пароль сотруднику лично.</div>
+      <label class="check mt-s"><input type="checkbox" name="must_change" value="1" {% if values.must_change %}checked{% endif %}>
+        <span>Потребовать сменить пароль при первом входе</span></label></div>
+    {% endif %}
+    <div class="field"><label class="check"><input type="checkbox" name="is_active" value="1" {% if values.is_active %}checked{% endif %} {% if ro %}disabled{% endif %}>
+      <span>Учётная запись включена</span></label></div>
+    <details class="adv" open><summary>Привязка к боту</summary>
+      <div class="field"><label for="max_user_id">Идентификатор в MAX</label>
+        <input type="text" id="max_user_id" name="max_user_id" value="{{ values.max_user_id }}" autocomplete="off" {% if ro %}readonly{% endif %}>
+        <div class="help">Можно оставить пустым: на четвёртом этапе привязка будет происходить автоматически, когда сотрудник напишет боту.</div></div>
+      <div class="field"><label for="telegram_id">Идентификатор в Telegram</label>
+        <input type="text" id="telegram_id" name="telegram_id" value="{{ values.telegram_id }}" autocomplete="off" {% if ro %}readonly{% endif %}></div>
+    </details>
+    <div class="field"><label for="note">Заметка</label>
+      <input type="text" id="note" name="note" value="{{ values.note }}" autocomplete="off" {% if ro %}readonly{% endif %}></div>
+    {% if not ro %}<div class="form-actions"><button class="btn primary" type="submit">Сохранить</button><a class="btn" href="/users">Отмена</a></div>{% endif %}
+  </div>
+</form>
+{% if target and not ro and target.id != user.id %}
+<div class="card maxw-md">
+  <h2>Удаление</h2>
+  <form method="post" action="/users/{{ target.id }}/delete" accept-charset="utf-8" data-confirm="Удалить сотрудника «{{ target.full_name or target.login }}»? Это нельзя отменить. Чтобы только закрыть доступ — просто выключите учётную запись.">
+    {{ m.csrf_field() }}<button class="btn danger" type="submit">Удалить сотрудника</button></form>
+  <p class="help">Если человек уволился, безопаснее выключить учётную запись, а не удалять.</p>
+</div>
+{% endif %}
+{% endblock %}

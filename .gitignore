@@ -1,0 +1,15 @@
+# данные и секреты — никогда в репозиторий
+data/
+logs/
+demo-data/
+venv/
+.env
+*.db
+*.db-wal
+*.db-shm
+*.pem
+*.key
+secret.key
+копия-*.zip
+__pycache__/
+*.pyc

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block title %}Тестирование{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Тестирование</h1><p>Проверка сервера, сети и всех подключений одной кнопкой.</p></div>
+</div>
+
+<div class="card">
+  <form method="post" action="/testing/run" accept-charset="utf-8" data-busy="1">
+    {{ m.csrf_field() }}
+    <div class="actions">
+      <button class="btn primary big" type="submit" data-busy-label="Проверяю…">Проверить всё</button>
+      {% if can('report.download') %}<a class="btn big" href="/testing/report.txt">Скачать отчёт</a>{% endif %}
+    </div>
+    <p class="spinner-note mt-s">Идёт проверка. Это занимает до полминуты — не закрывайте страницу.</p>
+  </form>
+  {% if run %}
+    <div class="summary-row mt-m">
+      <span class="pill s-ok"><b>{{ run.summary.ok }}</b> работает</span>
+      <span class="pill s-warn"><b>{{ run.summary.warn }}</b> внимание</span>
+      <span class="pill s-error"><b>{{ run.summary.error }}</b> ошибок</span>
+      <span class="muted small">Проверка от {{ run.finished_at|dt('%d.%m.%Y %H:%M:%S') }}, заняла {{ '%.1f'|format(run.duration_ms / 1000) }} с{% if run.by_user %}, запустил: {{ run.by_user }}{% endif %}</span>
+    </div>
+  {% else %}
+    <p class="mt-m muted">Проверка ещё не запускалась. Нажмите «Проверить всё».</p>
+  {% endif %}
+  <p class="help">Отчёт — обычный текстовый файл для разработчика. Паролей и токенов в нём нет.</p>
+</div>
+
+{% if run %}
+{% for g in run.groups %}
+<div class="card">
+  <h2>{{ g.title }}</h2>
+  {% for it in g['items'] %}
+    <div class="check-row s-{{ it.status }}">
+      <div>{{ m.badge(it.status) }}</div>
+      <div>
+        <div class="check-title">{{ it.title }}{% if it.type_title %} <span class="check-tag">· {{ it.type_title }}</span>{% endif %}</div>
+        <div class="check-msg">{{ it.message }}</div>
+        {% if it.status in ('warn', 'error') and it.action %}
+          <div class="todo {{ it.status }}"><b>Что делать:</b> {{ it.action }}</div>
+        {% endif %}
+        {% if it.conn_id %}<div class="small mt-xs"><a href="/connections/{{ it.conn_id }}">Открыть подключение</a></div>{% endif %}
+      </div>
+    </div>
+  {% endfor %}
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}

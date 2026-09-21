@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block title %}{{ conn.name if conn else 'Новое подключение: ' ~ ctype.title }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ conn.name if conn else 'Новое подключение' }}</h1>
+    <p>{{ ctype.title }}</p>
+  </div>
+  <a class="btn" href="/connections">К списку</a>
+</div>
+
+{% if form_error %}<div class="flash error" role="alert">{{ form_error }}</div>{% endif %}
+
+{% if conn %}
+<div class="card">
+  <div class="page-head">
+    <h2>Состояние связи</h2>
+    {% if not conn.enabled %}{{ m.badge('off') }}{% else %}{{ m.badge(conn.last_status) }}{% endif %}
+  </div>
+  {% if conn.enabled and conn.last_message %}
+    <p>{{ conn.last_message }}</p>
+    {% if conn.last_status in ('warn', 'error') and conn.last_action %}
+      <div class="todo {{ conn.last_status }}"><b>Что делать:</b> {{ conn.last_action }}</div>
+    {% endif %}
+    <p class="muted small mt-s">Проверено: {{ conn.last_checked_at|dt }}</p>
+  {% elif not conn.enabled %}
+    <p class="muted">Подключение отключено — его нет в проверках. Включите его кнопкой внизу страницы.</p>
+  {% else %}
+    <p class="muted">Связь ещё не проверялась.</p>
+  {% endif %}
+  {% if can('testing.run') and conn.enabled %}
+    <form method="post" action="/connections/{{ conn.id }}/check" accept-charset="utf-8" data-busy="1" class="mt-s">
+      {{ m.csrf_field() }}
+      <button class="btn" type="submit" data-busy-label="Проверяю…">Проверить связь</button>
+      <span class="spinner-note small">Идёт проверка, обычно до 20 секунд…</span>
+    </form>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+  <p>{{ ctype.description }}</p>
+  {% if ctype.howto %}
+    <details class="where"><summary>Что нужно знать перед началом</summary>
+      <ol>{% for step in ctype.howto %}<li>{{ step }}</li>{% endfor %}</ol></details>
+  {% endif %}
+</div>
+
+{% if ctype.oauth == 'google' and conn %}
+<div class="card">
+  <h2>Аккаунт Google</h2>
+  {% if view.email.value %}
+    <p>Подключён аккаунт: <b>{{ view.email.value }}</b>. Секретный токен доступа сохранён в зашифрованном виде: <span class="mono">{{ view.refresh_token.mask or '********' }}</span></p>
+  {% else %}
+    <p>Аккаунт ещё не подключён. Нажмите кнопку — откроется страница Google, где нужно выбрать аккаунт и разрешить доступ к Gmail и Google Диску. Пароль от Google панель не видит.</p>
+  {% endif %}
+  {% if not (settings.google_client_id and settings.google_client_secret) %}
+    <div class="flash warn">Сначала впишите Client ID и Client Secret в разделе <a href="/settings#google">«Настройки»</a> — иначе Google откажет.</div>
+  {% endif %}
+  <div class="field">
+    <label for="ruri">Адрес возврата (его нужно добавить в Google Cloud → «Разрешённые URI перенаправления»)</label>
+    <div class="copybox"><input type="text" id="ruri" value="{{ redirect_uri }}" readonly>
+      <button class="btn" type="button" data-copy="#ruri">Копировать</button></div>
+    <div class="help">Google принимает только адреса с https и доменом, либо http://localhost. Если панель открыта по IP-адресу, сделайте вход так: на самом сервере откройте
+      панель по адресу <code>http://localhost:порт</code> и нажмите кнопку там — этот адрес и нужно внести в Google Cloud.</div>
+  </div>
+  {% if can('connections.manage') %}
+  <form method="post" action="/connections/{{ conn.id }}/google/start" accept-charset="utf-8">
+    {{ m.csrf_field() }}
+    <button class="btn primary" type="submit">{{ 'Подключить аккаунт Google заново' if view.email.value else 'Подключить аккаунт Google' }}</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+
+<form method="post" accept-charset="utf-8" data-busy="1" {% if conn %}action="/connections/{{ conn.id }}"{% else %}action="/connections/new/{{ ctype.key }}"{% endif %}>
+  {{ m.csrf_field() }}
+  <div class="card">
+    <h2>Настройки подключения</h2>
+    <div class="field">
+      <label for="name">Название{% if not readonly %}<span class="req">*</span>{% endif %}</label>
+      <input type="text" id="name" name="name" value="{{ name }}" class="{{ 'invalid' if errors.name }}" autocomplete="off" placeholder="{{ ctype.name_hint }}" {% if readonly %}readonly{% endif %}>
+      {% if errors.name %}<div class="err-text" role="alert">{{ errors.name }}</div>{% endif %}
+      <div class="help">Как вы будете называть это подключение в панели. Название должно быть уникальным.</div>
+    </div>
+    {% for f in ctype.fields if not f.hidden and f.type != 'readonly' and not f.advanced %}
+      {{ m.field(f, view[f.name], errors.get(f.name, ''), readonly) }}
+    {% endfor %}
+    {% set adv = ctype.fields|selectattr('advanced')|list %}
+    {% if adv %}
+      <details class="adv" {% if adv|selectattr('name', 'in', errors.keys()|list)|list %}open{% endif %}>
+        <summary>Дополнительно</summary>
+        {% for f in adv %}{{ m.field(f, view[f.name], errors.get(f.name, ''), readonly) }}{% endfor %}
+      </details>
+    {% endif %}
+    {% if not readonly %}
+    <div class="form-actions">
+      {% if ctype.oauth == 'google' and not conn %}
+        <button class="btn primary" type="submit" name="action" value="save">Сохранить и перейти к входу в Google</button>
+      {% else %}
+        <button class="btn primary" type="submit" name="action" value="save">Сохранить</button>
+        {% if ctype.oauth != 'google' %}
+        <button class="btn" type="submit" name="action" value="save_check" data-busy-label="Сохраняю и проверяю…">Сохранить и проверить связь</button>
+        {% endif %}
+      {% endif %}
+      <a class="btn" href="/connections">Отмена</a>
+    </div>
+    <span class="spinner-note small">Идёт проверка, обычно до 20 секунд…</span>
+    {% endif %}
+  </div>
+</form>
+
+{% if conn and can('connections.manage') %}
+<div class="card">
+  <h2>Отключение и удаление</h2>
+  <div class="actions">
+    <form method="post" action="/connections/{{ conn.id }}/toggle" accept-charset="utf-8">{{ m.csrf_field() }}
+      <button class="btn" type="submit">{{ 'Отключить' if conn.enabled else 'Включить' }}</button></form>
+    <form method="post" action="/connections/{{ conn.id }}/delete" accept-charset="utf-8"
+          data-confirm="Удалить подключение «{{ conn.name }}» вместе с сохранёнными токенами? Это нельзя отменить.">{{ m.csrf_field() }}
+      <button class="btn danger" type="submit">Удалить подключение</button></form>
+  </div>
+  <p class="help">«Отключить» — временно убрать из проверок, данные остаются. «Удалить» — стереть подключение и сохранённые токены.</p>
+</div>
+{% endif %}
+{% endblock %}

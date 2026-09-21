@@ -1,0 +1,52 @@
+{% macro badge(status) -%}
+<span class="badge s-{{ status or 'none' }}"><span aria-hidden="true">{{ status|status_icon }}</span>{{ status|status_ru }}</span>
+{%- endmacro %}
+
+{% macro csrf_field() -%}
+<input type="hidden" name="csrf" value="{{ csrf }}">
+{%- endmacro %}
+
+{# Поле формы, построенное из описания Field. v — {value, mask, has}. #}
+{% macro field(f, v, error='', readonly=False, idprefix='f') -%}
+{% set fid = idprefix ~ '_' ~ f.name %}
+<div class="field">
+  {% if f.type == 'bool' %}
+    <label class="check" for="{{ fid }}">
+      <input type="checkbox" id="{{ fid }}" name="f_{{ f.name }}" value="1" {% if v.value %}checked{% endif %} {% if readonly %}disabled{% endif %}>
+      <span>{{ f.label }}</span>
+    </label>
+  {% else %}
+    <label for="{{ fid }}">{{ f.label }}{% if f.required %}<span class="req" title="Обязательное поле">*</span>{% endif %}</label>
+    {% if f.type == 'readonly' %}
+      <input type="text" id="{{ fid }}" value="{{ v.value or 'ещё не заполнено' }}" readonly>
+    {% elif f.type == 'select' %}
+      <select id="{{ fid }}" name="f_{{ f.name }}" class="{{ 'invalid' if error }}" {% if readonly %}disabled{% endif %}>
+        {% for val, label in f.options %}<option value="{{ val }}" {% if v.value == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    {% elif f.secret %}
+      <input type="password" id="{{ fid }}" name="f_{{ f.name }}" value="" autocomplete="new-password" spellcheck="false"
+             class="{{ 'invalid' if error }}" placeholder="{{ 'Оставьте пустым — не менять' if v.has else (f.placeholder or 'Вставьте значение') }}"
+             {% if readonly %}disabled{% endif %}>
+      {% if v.has %}
+        <div class="mask-line">Сохранено: <span class="mono">{{ v.mask }}</span>. Пустое поле = не менять.</div>
+        {% if not f.required and not readonly %}
+          <label class="check small mt-xs"><input type="checkbox" name="clear_{{ f.name }}" value="1"> <span>Удалить сохранённое значение</span></label>
+        {% endif %}
+      {% endif %}
+    {% else %}
+      <input type="text" id="{{ fid }}" name="f_{{ f.name }}" value="{{ v.value }}" class="{{ 'invalid' if error }}"
+             placeholder="{{ f.placeholder }}" autocomplete="off" spellcheck="false"
+             {% if f.type == 'number' %}inputmode="decimal"{% endif %}
+             {% if f.suggestions %}list="{{ fid }}_list"{% endif %} {% if readonly %}readonly{% endif %}>
+      {% if f.suggestions %}<datalist id="{{ fid }}_list">{% for s in f.suggestions %}<option value="{{ s }}">{% endfor %}</datalist>{% endif %}
+    {% endif %}
+  {% endif %}
+  {% if error %}<div class="err-text" role="alert">{{ error }}</div>{% endif %}
+  {% if f.help %}<div class="help">{{ f.help }}</div>{% endif %}
+  {% if f.where %}
+    <details class="where"><summary>Откуда взять</summary>
+      <ol>{% for step in f.where %}<li>{{ step }}</li>{% endfor %}</ol>
+    </details>
+  {% endif %}
+</div>
+{%- endmacro %}

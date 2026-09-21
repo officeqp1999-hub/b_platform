@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block title %}Подключения{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Подключения</h1><p>Системы, к которым платформа обращается за данными.</p></div>
+  {% if can('connections.manage') %}<div class="actions"><a class="btn primary" href="/connections/new">Добавить подключение</a></div>{% endif %}
+</div>
+
+{% if total == 0 %}
+  <div class="card empty">
+    <p>Подключений пока нет.</p>
+    {% if can('connections.manage') %}<a class="btn primary" href="/connections/new">Добавить первое подключение</a>{% endif %}
+  </div>
+{% endif %}
+
+{% for g in groups %}{% if g['items'] %}
+  <div class="group-title">{{ g.name }}</div>
+  {% for it in g['items'] %}
+    {% set c = it.conn %}
+    <div class="card">
+      <div class="page-head">
+        <div>
+          <h3><a href="/connections/{{ c.id }}">{{ c.name }}</a></h3>
+          <span class="muted small">{{ it.ctype.title }}</span>
+        </div>
+        <div>{% if not c.enabled %}{{ m.badge('off') }}{% else %}{{ m.badge(c.last_status) }}{% endif %}</div>
+      </div>
+      {% if c.enabled and c.last_message %}
+        <p class="small">{{ c.last_message }}</p>
+        {% if c.last_status in ('warn', 'error') and c.last_action %}
+          <div class="todo {{ c.last_status }}"><b>Что делать:</b> {{ c.last_action }}</div>
+        {% endif %}
+        <p class="muted small mt-s">Проверено: {{ c.last_checked_at|dt }}</p>
+      {% elif not c.enabled %}
+        <p class="muted small">Подключение отключено и не проверяется.</p>
+      {% else %}
+        <p class="muted small">Связь ещё не проверялась.</p>
+      {% endif %}
+    </div>
+  {% endfor %}
+{% endif %}{% endfor %}
+{% endblock %}

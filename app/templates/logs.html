@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block title %}Журнал{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><h1>Журнал событий</h1><p>Входы, изменения, проверки и ошибки. Записи старше {{ retention }} дн. удаляются автоматически.</p></div>
+</div>
+<div class="card">
+  <form method="get" action="/logs" class="filters" accept-charset="utf-8">
+    <div class="field"><label for="level">Важность</label>
+      <select id="level" name="level"><option value="">Любая</option>
+        {% for k, v in LEVELS.items() %}<option value="{{ k }}" {% if level == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="section">Раздел</label>
+      <select id="section" name="section"><option value="">Любой</option>
+        {% for k, v in SECTIONS.items() %}<option value="{{ k }}" {% if section == k %}selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="q">Поиск по тексту</label>
+      <input type="search" id="q" name="q" value="{{ q }}" autocomplete="off"></div>
+    <div class="field"><button class="btn primary" type="submit">Показать</button></div>
+  </form>
+</div>
+<div class="card">
+  {% if not events %}
+    <div class="empty">Записей по этим условиям нет.</div>
+  {% else %}
+  <p class="muted small">Найдено записей: {{ total }}</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Время</th><th>Важность</th><th>Раздел</th><th>Событие</th></tr></thead>
+    <tbody>
+    {% for e in events %}
+      <tr>
+        <td class="nowrap small">{{ e.ts|dt('%d.%m.%Y %H:%M:%S') }}</td>
+        <td><span class="badge s-{{ {'info':'ok','warning':'warn','error':'error'}[e.level] }}">{{ e.level|level_ru }}</span></td>
+        <td class="small">{{ e.section|section_ru }}</td>
+        <td>{{ e.message }}{% if e.username %} <span class="muted small">— {{ e.username }}</span>{% endif %}
+          {% if e.details %}<details class="where"><summary>Подробности для разработчика</summary><pre class="details">{{ e.details }}</pre></details>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody></table></div>
+  {% if pages > 1 %}
+    <div class="pager">
+      {% if page > 1 %}<a class="btn small" href="/logs?{{ base_q ~ ('&' if base_q) }}page={{ page - 1 }}">← Новее</a>{% endif %}
+      <span class="muted small">Страница {{ page }} из {{ pages }}</span>
+      {% if page < pages %}<a class="btn small" href="/logs?{{ base_q ~ ('&' if base_q) }}page={{ page + 1 }}">Старее →</a>{% endif %}
+    </div>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

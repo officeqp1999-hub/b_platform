@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block title %}Обзор{% endblock %}
+{% block content %}
+<div class="page-head"><div>
+  <h1>Обзор</h1>
+  <p>Здравствуйте, {{ user.full_name or user.login }}. Роль: {{ user.role|role_ru }}.</p>
+</div></div>
+
+{% if can('testing.run') %}
+<div class="card">
+  <h2>Состояние системы</h2>
+  {% if last_test %}
+    <div class="summary-row">
+      <span class="pill s-ok"><b>{{ last_test.summary.ok }}</b> работает</span>
+      <span class="pill s-warn"><b>{{ last_test.summary.warn }}</b> внимание</span>
+      <span class="pill s-error"><b>{{ last_test.summary.error }}</b> ошибок</span>
+      <span class="muted small">Проверка от {{ last_test.finished_at|dt }}</span>
+    </div>
+    {% if last_test.summary.error or last_test.summary.warn %}
+      <p class="mt-m">Есть, что поправить. Подробности и подсказки — на экране «Тестирование».</p>
+    {% else %}
+      <p class="mt-m">Всё работает.</p>
+    {% endif %}
+  {% else %}
+    <p>Проверка ещё не запускалась. Нажмите «Проверить всё» на экране «Тестирование» — за полминуты станет ясно, что работает, а что нет.</p>
+  {% endif %}
+  <div class="form-actions"><a class="btn primary" href="/testing">Открыть «Тестирование»</a></div>
+</div>
+{% endif %}
+
+<div class="grid cols-3 mt-m">
+  {% if can('connections.view') %}
+  <div class="card">
+    <div class="stat">{{ conn_total }}</div>
+    <div class="stat-label">подключений</div>
+    <p class="small mt-s">
+      работает: {{ conn_counts.ok }}, внимание: {{ conn_counts.warn }}, ошибок: {{ conn_counts.error }}, не проверялось: {{ conn_counts[''] }}
+    </p>
+    <a href="/connections">Открыть подключения →</a>
+  </div>
+  {% endif %}
+  {% if can('users.view') %}
+  <div class="card">
+    <div class="stat">{{ users_total }}</div>
+    <div class="stat-label">сотрудников в панели</div>
+    <p class="small mt-s">Привязано к боту: {{ users_bot }}</p>
+    <a href="/users">Открыть сотрудников →</a>
+  </div>
+  {% endif %}
+  {% if can('logs.view') %}
+  <div class="card">
+    <div class="stat">{{ event_stats.get('error', 0) }}</div>
+    <div class="stat-label">ошибок в журнале за сутки</div>
+    <p class="small mt-s">Предупреждений: {{ event_stats.get('warning', 0) }}</p>
+    <a href="/logs">Открыть журнал →</a>
+  </div>
+  {% endif %}
+</div>
+
+{% if can('finance.view') %}
+<div class="card mt-m" id="finance">
+  <h2>Финансы</h2>
+  <p class="muted">Выручка, деньги на счетах и остатки появятся здесь после подключения 1С (второй этап). Этот блок видят только администратор и руководитель.</p>
+</div>
+{% else %}
+<div class="card mt-m">
+  <h2>Ваш доступ</h2>
+  <p class="muted">Финансовые показатели и настройки системы вам не показываются — это ограничение вашей роли «{{ user.role|role_ru }}». Вопросы сотрудникам и ответы по данным компании вы будете получать через бота.</p>
+</div>
+{% endif %}
+
+{% if checklist %}
+<div class="card">
+  <h2>С чего начать</h2>
+  <ul class="list">
+    {% for it in checklist %}
+      <li><span class="tick {{ 'done' if it.done }}" aria-hidden="true">{{ '✓' if it.done }}</span>
+        <span>{% if it.done %}<span class="done-text">{{ it.title }}</span>{% else %}<a href="{{ it.href }}">{{ it.title }}</a>{% endif %}</span></li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if events %}
+<div class="card">
+  <h2>Последние события</h2>
+  <div class="table-wrap"><table>
+    <tbody>
+    {% for e in events %}
+      <tr><td class="nowrap muted small">{{ e.ts|dt('%d.%m %H:%M') }}</td>
+          <td><span class="badge s-{{ {'info':'ok','warning':'warn','error':'error'}[e.level] }}">{{ e.level|level_ru }}</span></td>
+          <td>{{ e.message }}</td></tr>
+    {% endfor %}
+    </tbody></table></div>
+</div>
+{% endif %}
+{% endblock %}

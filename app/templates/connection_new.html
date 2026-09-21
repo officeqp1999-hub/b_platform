@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block title %}Новое подключение{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Новое подключение</h1><p>Выберите, что подключаем. Для каждого типа дальше будет форма с подсказками, откуда взять данные.</p></div>
+  <a class="btn" href="/connections">Назад</a></div>
+{% for gname, types in groups %}
+  <div class="group-title">{{ gname }}</div>
+  <div class="type-grid">
+  {% for t in types %}
+    {% set taken = t.single and t.key in existing %}
+    {% if taken %}
+      <div class="card type-card disabled">
+    {% else %}
+      <a class="card type-card" href="/connections/new/{{ t.key }}">
+    {% endif %}
+        <span class="type-icon" aria-hidden="true">{{ t.icon }}</span>
+        <strong>{{ t.title }}</strong>
+        <span class="muted small">{{ t.description }}</span>
+        {% if taken %}<span class="badge s-off">Уже создано — такое подключение может быть только одно</span>{% endif %}
+    {% if taken %}</div>{% else %}</a>{% endif %}
+  {% endfor %}
+  </div>
+{% endfor %}
+{% endblock %}
