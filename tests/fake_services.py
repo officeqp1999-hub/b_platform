@@ -213,6 +213,57 @@ async def claude_models(request: Request):
     return JSONResponse({"type": "error", "error": {"type": "authentication_error", "message": "invalid x-api-key"}}, status_code=401)
 
 
+CLAUDE_MESSAGES_CALLS = {"n": 0}  # только для автотеста лимита расходов: считает реальные обращения к /v1/messages
+FINANCE_TOOL_ANSWER = "По данным 1С: выручка 777000, деньги на счетах 55000, остатки на складах 999000."
+NO_ACCESS_ANSWER = "Эти данные вам показать не могу — недостаточно прав."
+
+
+def _claude_message(model: str, content: list, stop_reason: str, stop_details=None) -> dict:
+    return {"id": "msg_fake", "type": "message", "role": "assistant", "model": model, "content": content,
+            "stop_reason": stop_reason, "stop_details": stop_details, "usage": {"input_tokens": 123, "output_tokens": 45}}
+
+
+async def claude_messages(request: Request):
+    """Эмулирует /v1/messages: поведение выбирается по спецсловам в тексте вопроса (как режимы у 1С)."""
+    if request.headers.get("x-api-key") != CLAUDE_GOOD:
+        return JSONResponse({"type": "error", "error": {"type": "authentication_error", "message": "invalid x-api-key"}}, status_code=401)
+    CLAUDE_MESSAGES_CALLS["n"] += 1
+    body = await request.json()
+    model = body.get("model", "")
+    messages = body.get("messages", [])
+    tools = body.get("tools", [])
+    has_finance_tool = any(t.get("name") == "finance_summary" for t in tools)
+
+    last_content = messages[-1].get("content") if messages else None
+    if isinstance(last_content, list) and any(b.get("type") == "tool_result" for b in last_content):
+        # второй круг: нам вернули результат инструмента — отвечаем текстом
+        return JSONResponse(_claude_message(model, [{"type": "text", "text": FINANCE_TOOL_ANSWER}], "end_turn"))
+
+    question = ""
+    for m in reversed(messages):
+        if isinstance(m.get("content"), str):
+            question = m["content"]
+            break
+    q = question.lower()
+
+    if "фейк:429" in q:
+        return JSONResponse({"type": "error", "error": {"type": "rate_limit_error", "message": "rate limited"}}, status_code=429)
+    if "фейк:500" in q:
+        return JSONResponse({"type": "error", "error": {"type": "api_error", "message": "internal server error"}}, status_code=500)
+    if "фейк:refusal" in q:
+        return JSONResponse(_claude_message(model, [], "refusal", stop_details={"type": "refusal", "category": "test"}))
+    if "фейк:maxtokens" in q:
+        return JSONResponse(_claude_message(model, [{"type": "text", "text": "Незаконченный отв"}], "max_tokens"))
+    if "фейк:badjson" in q:
+        return PlainTextResponse("{не json", status_code=200, media_type="application/json")
+    if any(w in q for w in ("выручк", "деньги на счет", "остатк")):
+        if has_finance_tool:
+            return JSONResponse(_claude_message(
+                model, [{"type": "tool_use", "id": "toolu_1", "name": "finance_summary", "input": {}}], "tool_use"))
+        return JSONResponse(_claude_message(model, [{"type": "text", "text": NO_ACCESS_ANSWER}], "end_turn"))
+    return JSONResponse(_claude_message(model, [{"type": "text", "text": f"Обычный ответ на вопрос: {question}"}], "end_turn"))
+
+
 # --- Маркетплейсы -----------------------------------------------------------
 
 async def wb_seller(request: Request):
@@ -245,10 +296,16 @@ async def debug_onec_summary_calls(request: Request):
     return JSONResponse(dict(ONEC_SUMMARY_CALLS))
 
 
+async def debug_claude_messages_calls(request: Request):
+    """Только для автотеста лимита расходов: сколько раз реально дошли до /v1/messages."""
+    return JSONResponse(dict(CLAUDE_MESSAGES_CALLS))
+
+
 def build_app() -> Starlette:
     return Starlette(routes=[
         Route("/", root),
         Route("/debug/onec-summary-calls", debug_onec_summary_calls),
+        Route("/debug/claude-messages-calls", debug_claude_messages_calls),
         Route("/{prefix}/{mode}/odata/standard.odata/", onec),
         Route("/{prefix}/{mode}/odata/standard.odata", onec),
         Route("/{prefix}/{mode}/hs/{what}", onec_hs),
@@ -262,6 +319,7 @@ def build_app() -> Starlette:
         Route("/bot{token}/getMe", tg_getme),
         Route("/me", max_me),
         Route("/v1/models", claude_models),
+        Route("/v1/messages", claude_messages, methods=["POST"]),
         Route("/api/v1/seller-info", wb_seller),
         Route("/v1/roles", ozon_roles, methods=["POST"]),
         Route("/campaigns", ym_campaigns),

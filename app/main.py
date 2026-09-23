@@ -23,7 +23,7 @@ from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
-from . import auth, backup, config, connectors, crypto, diagnostics, forms, settings_schema, store
+from . import auth, backup, claude_core, config, connectors, crypto, diagnostics, finance, forms, settings_schema, store
 from .connectors import google as google_conn
 from .connectors import one_c_data
 from .connectors.base import Ctx as CheckCtx
@@ -38,6 +38,7 @@ STATUS_ICON = {"ok": "●", "warn": "▲", "error": "✕", "off": "○", "": "�
 
 NAV = [
     ("overview", "Обзор", "/", "overview.view"),
+    ("chat", "Спросить Claude", "/chat", "chat.use"),
     ("connections", "Подключения", "/connections", "connections.view"),
     ("users", "Сотрудники", "/users", "users.view"),
     ("testing", "Тестирование", "/testing", "testing.run"),
@@ -257,22 +258,6 @@ def _checklist() -> list[dict]:
     return [{"title": t, "href": h, "done": bool(d)} for t, h, d in items]
 
 
-def _primary_onec_connection() -> Optional[dict]:
-    """Включённая база 1С для карточки «Финансы». Пока баз обычно одна; если их несколько —
-    берём первую созданную (по id), а не первую по имени: имя может быть каким угодно
-    («тестовая», «резервная»...) и не должно решать, откуда брать деньги на обзор."""
-    conns = [c for c in store.list_connections() if c["type"] == "onec" and c["enabled"]]
-    return min(conns, key=lambda c: c["id"]) if conns else None
-
-
-async def _finance_summary() -> Optional[one_c_data.DataResult]:
-    conn = _primary_onec_connection()
-    if conn is None:
-        return None
-    cfg, _ = store.plain_config(conn)
-    return await one_c_data.finance_summary(conn["id"], cfg)
-
-
 @guarded("overview.view")
 async def overview(r: Req) -> Response:
     data: dict[str, Any] = {}
@@ -298,13 +283,13 @@ async def overview(r: Req) -> Response:
         # сами цифры страница обзора не запрашивает: свежий запрос к 1С может быть медленным
         # (база недоступна, сеть тормозит), а обзор должен открываться мгновенно всегда.
         # Числа подгружает app.js через /api/finance/summary после отрисовки страницы.
-        data["finance_connected"] = _primary_onec_connection() is not None
+        data["finance_connected"] = finance.primary_onec_connection() is not None
     return render(r, "overview.html", nav_active="overview", **data)
 
 
 @guarded("finance.view")
 async def api_finance(r: Req) -> Response:
-    result = await _finance_summary()
+    result = await finance.summary()
     if result is None:
         return JSONResponse({"status": "off", "message": "Финансовые показатели появятся после подключения 1С.",
                              "action": "", "cached": False, "revenue_month": None, "cash_total": None, "stock_value": None})
@@ -312,6 +297,37 @@ async def api_finance(r: Req) -> Response:
               "revenue_month": None, "cash_total": None, "stock_value": None}
     payload.update(result.data)
     return JSONResponse(payload)
+
+
+# ---------------------------------------------------------------------------
+# Чат с ядром Claude
+# ---------------------------------------------------------------------------
+
+@guarded("chat.use")
+async def chat_page(r: Req) -> Response:
+    history = store.recent_chat_messages(r.user["id"], 50)
+    claude_conn = next((c for c in store.list_connections() if c["type"] == "claude" and c["enabled"]), None)
+    spend = None
+    if claude_conn is not None and auth.can(r.user, "finance.view"):
+        cfg, _ = store.plain_config(claude_conn)
+        spend = {"spent": claude_core.month_spend_usd(), "limit": claude_core.monthly_limit_usd(cfg)}
+    return render(r, "chat.html", nav_active="chat", history=history, claude_connected=claude_conn is not None, spend=spend)
+
+
+@guarded("chat.use")
+async def chat_ask(r: Req) -> Response:
+    question = str(r.form.get("question") or "")
+    result = await claude_core.ask(r.user, question)
+    if result.status != "ok":
+        flash(r, result.status, result.action or "Не удалось получить ответ.")
+    return redirect("/chat")
+
+
+@guarded("chat.use")
+async def chat_clear(r: Req) -> Response:
+    store.clear_chat_history(r.user["id"])
+    flash(r, "ok", "История очищена.")
+    return redirect("/chat")
 
 
 # ---------------------------------------------------------------------------
@@ -935,6 +951,9 @@ routes = [
     Route("/password", password_view, methods=["GET", "POST"]),
     Route("/", overview),
     Route("/api/finance/summary", api_finance),
+    Route("/chat", chat_page),
+    Route("/chat/ask", chat_ask, methods=["POST"]),
+    Route("/chat/clear", chat_clear, methods=["POST"]),
     Route("/connections", connections_list),
     Route("/connections/new", connections_new),
     Route("/connections/new/{type}", connection_create, methods=["GET", "POST"]),

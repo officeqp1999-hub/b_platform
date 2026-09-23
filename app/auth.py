@@ -18,6 +18,7 @@ LOCK_SECONDS = 300
 # Какая роль что может. Ключ права -> роли, которым оно разрешено.
 PERMISSIONS: dict[str, set[str]] = {
     "overview.view":      {"admin", "head", "manager", "employee"},
+    "chat.use":           {"admin", "head", "manager", "employee"},   # ядро Claude отвечает всем; что оно видит — решают их же права
     "finance.view":       {"admin", "head"},                # менеджер и сотрудник финансов не видят
     "connections.view":   {"admin", "head"},
     "connections.manage": {"admin"},
@@ -32,6 +33,7 @@ PERMISSIONS: dict[str, set[str]] = {
 
 PERMISSION_TITLES = {
     "overview.view": "Обзор",
+    "chat.use": "Чат с Claude",
     "finance.view": "Финансовые показатели",
     "connections.view": "Просмотр подключений",
     "connections.manage": "Создание и изменение подключений",

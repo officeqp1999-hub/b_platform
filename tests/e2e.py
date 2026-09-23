@@ -677,6 +677,102 @@ def scenario_roles(admin: Browser) -> dict[str, Browser]:
     return br
 
 
+def scenario_claude_chat(admin: Browser, br: dict[str, Browser]) -> None:
+    section("7b. Чат с ядром Claude: диалог, инструменты по правам, лимит расходов")
+    cid = conn_id("Ядро Claude")
+    head, manager, emp = br["head1"], br["petrova"], br["emp1"]
+
+    for b, who in ((admin, "администратор"), (head, "руководитель"), (manager, "менеджер"), (emp, "сотрудник")):
+        check(b.get("/chat").status_code == 200, f"{who}: страница чата открывается")
+
+    page = text_of(admin.post("/chat/ask", {"question": "Расскажи короткий факт про облака"}))
+    check("Обычный ответ на вопрос: Расскажи короткий факт про облака" in page,
+          "обычный вопрос без инструментов — ответ показан в истории", page[:300])
+    check("Расходы на Claude в этом месяце" in page, "администратор видит расходы на Claude за месяц", page[:400])
+    check("Расходы на Claude" not in text_of(manager.get("/chat")), "менеджеру расходы не показываются (это финансовые данные)")
+
+    # вопрос про деньги: у админа есть finance.view — Claude реально вызывает инструмент,
+    # а не просто предполагает; данные приходят из инструмента, а не выдумываются
+    page = text_of(admin.post("/chat/ask", {"question": "Сколько у нас выручки за месяц?"}))
+    check(fk.FINANCE_TOOL_ANSWER in page, "вопрос про деньги (есть право): инструмент вызван, ответ по данным 1С", page[:300])
+
+    # тот же вопрос от менеджера: права нет — инструмент серверу вообще не предлагается Claude,
+    # а не просто «Claude сам решил не отвечать»
+    page = text_of(manager.post("/chat/ask", {"question": "Сколько у нас выручки за месяц?"}))
+    check(fk.NO_ACCESS_ANSWER in page and fk.FINANCE_TOOL_ANSWER not in page,
+          "менеджер: тот же вопрос — инструмент недоступен по правам, реальных цифр в ответе нет", page[:300])
+
+    # ошибки API — понятные сообщения нужной степени тревожности, без голых кодов
+    cases = [
+        ("фейк:429 — покажи выручку", "warn", "перегружен"),
+        ("фейк:500 — покажи выручку", "warn", "недоступен"),
+        ("фейк:refusal — покажи выручку", "warn", "отказался"),
+        ("фейк:badjson — покажи выручку", "error", "ожидаемом формате"),
+    ]
+    for question, kind, must in cases:
+        raw = text_of(admin.post("/chat/ask", {"question": question}))
+        fl = flashes(raw)
+        check(fl != "", f"«{question[:12]}…»: есть понятное сообщение об ошибке", fl[:300])
+        check(f'class="flash {kind}"' in raw, f"«{question[:12]}…»: степень тревожности верная ({kind})", raw[:300])
+        check(must in fl, f"«{question[:12]}…»: сообщение по делу — «{must}»", fl[:300])
+        check(not re.search(r"\b(401|403|404|429|500|502)\b", fl), f"«{question[:12]}…»: без голых кодов ошибок", fl)
+
+    # обрезанный ответ (max_tokens) — не ошибка, короткий ответ с пояснением
+    page = text_of(admin.post("/chat/ask", {"question": "фейк:maxtokens — длинный вопрос"}))
+    check("Незаконченный отв" in page and "обрезан" in page, "обрезанный ответ показан как есть, с пояснением", page[:400])
+
+    # ядро Claude отключено — понятная ошибка вместо попытки достучаться до API
+    admin.post(f"/connections/{cid}/toggle")
+    r = admin.post("/chat/ask", {"question": "Привет"})
+    check("Ядро Claude ещё не подключено" in flashes(text_of(r)), "отключённое ядро Claude — понятная ошибка, без запроса к API")
+    admin.post(f"/connections/{cid}/toggle")
+
+    # модель не из нашего прайс-листа — расход всё равно считается (по «дорогому» тарифу),
+    # а не бесплатно: иначе месячный лимит незаметно перестаёт работать для такой модели
+    admin.post(f"/connections/{cid}", {"name": "Ядро Claude", "f_api_key": "", "f_model": "claude-opus-4-8", "f_monthly_limit_usd": "50"})
+    admin.post("/chat/ask", {"question": "Ещё один факт про облака"})
+    row = db_rows("SELECT * FROM ai_usage ORDER BY id DESC LIMIT 1")[0]
+    check(row["model"] == "claude-opus-4-8" and row["cost_usd"] > 0,
+          "расход для модели не из прайс-листа посчитан не по нулю", str(row))
+    admin.post(f"/connections/{cid}", {"name": "Ядро Claude", "f_api_key": "", "f_model": "claude-sonnet-5", "f_monthly_limit_usd": "50"})
+
+    # лимит проверяется и МЕЖДУ обращениями внутри одного вопроса (цепочка вызовов инструмента),
+    # а не только один раз в начале — иначе один вопрос может пробить лимит сразу на несколько запросов
+    spent_now = db_rows("SELECT COALESCE(SUM(cost_usd), 0) s FROM ai_usage")[0]["s"]
+    round_cost = 123 / 1_000_000 * 2.00 + 45 / 1_000_000 * 10.00  # claude-sonnet-5: $2/$10 за млн токенов
+    admin.post(f"/connections/{cid}", {"name": "Ядро Claude", "f_api_key": "", "f_model": "claude-sonnet-5",
+                                        "f_monthly_limit_usd": f"{spent_now + round_cost:.6f}"})
+    calls_before = httpx.get(f"{FAKE}/debug/claude-messages-calls", trust_env=False).json()["n"]
+    fl = flashes(text_of(admin.post("/chat/ask", {"question": "Сколько у нас выручки за месяц?"})))
+    check("нескольких обращений" in fl and "лимит" in fl.lower(),
+          "лимит проверяется и между обращениями внутри одного вопроса, не только в начале", fl[:300])
+    calls_after = httpx.get(f"{FAKE}/debug/claude-messages-calls", trust_env=False).json()["n"]
+    check(calls_after - calls_before == 1,
+          f"…первое обращение (вызов инструмента) прошло, второе — уже нет (было +{calls_after - calls_before})")
+    admin.post(f"/connections/{cid}", {"name": "Ядро Claude", "f_api_key": "", "f_model": "claude-sonnet-5", "f_monthly_limit_usd": "50"})
+
+    # месячный лимит расходов: панель останавливает запросы САМА, не дожидаясь ответа от Anthropic
+    calls_before = httpx.get(f"{FAKE}/debug/claude-messages-calls", trust_env=False).json()["n"]
+    spent = db_rows("SELECT COALESCE(SUM(cost_usd), 0) s FROM ai_usage")[0]["s"]
+    admin.post(f"/connections/{cid}", {"name": "Ядро Claude", "f_api_key": "", "f_model": "claude-sonnet-5",
+                                        "f_monthly_limit_usd": f"{spent:.6f}"})
+    r = admin.post("/chat/ask", {"question": "Ещё один вопрос про облака"})
+    fl = flashes(text_of(r))
+    check("лимит" in fl.lower() and "исчерпан" in fl, "месячный лимит расходов исчерпан — вопрос отклонён", fl[:300])
+    calls_after = httpx.get(f"{FAKE}/debug/claude-messages-calls", trust_env=False).json()["n"]
+    check(calls_after == calls_before, "…и к Claude при этом даже не обращались (лимит проверяется до вызова API)")
+    admin.post(f"/connections/{cid}", {"name": "Ядро Claude", "f_api_key": "", "f_model": "claude-sonnet-5", "f_monthly_limit_usd": "50"})
+
+    # история и её очистка — только своя, по сотруднику
+    page = text_of(admin.get("/chat"))
+    check('class="chat-msg user"' in page and "Расскажи короткий факт" in page, "история вопросов сохраняется и показывается")
+    check(text_of(manager.get("/chat")).count("Сколько у нас выручки") <= 1 and "Расскажи короткий факт" not in text_of(manager.get("/chat")),
+          "история — только своя, а не общая на всех сотрудников")
+    admin.post("/chat/clear")
+    page = text_of(admin.get("/chat"))
+    check("Пока пусто" in page and "Расскажи короткий факт" not in page, "очистка истории работает")
+
+
 def scenario_testing(admin: Browser) -> None:
     section("8. Экран «Тестирование»")
     setup_app_env()
@@ -859,6 +955,7 @@ def main() -> int:
         scenario_single(admin)
         scenario_google(admin)
         br = scenario_roles(admin)
+        scenario_claude_chat(admin, br)
         scenario_testing(admin)
         scenario_public_url(admin)
         scenario_backup_report_logs(admin, br["petrova"])

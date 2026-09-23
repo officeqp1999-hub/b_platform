@@ -481,3 +481,41 @@ def pop_oauth_state(state: str) -> Optional[dict]:
     if datetime.now(timezone.utc).timestamp() - row["created_at"] > 900:
         return None
     return dict(row)
+
+
+# ---------------------------------------------------------------------------
+# Чат с ядром Claude и учёт расходов
+# ---------------------------------------------------------------------------
+
+def save_chat_message(user_id: int, role: str, content: str) -> None:
+    """Как и журнал — вычищаем секреты (мало ли кто вставит в вопрос пароль или ключ)."""
+    with db.session() as con:
+        con.execute("INSERT INTO chat_messages(user_id, role, content, created_at) VALUES(?,?,?,?)",
+                    (user_id, role, crypto.redact(content), db.now_utc()))
+
+
+def recent_chat_messages(user_id: int, limit: int) -> list[dict]:
+    """Последние сообщения диалога этого сотрудника, от старых к новым (контекст для следующего вопроса)."""
+    with db.session() as con:
+        rows = con.execute("SELECT * FROM chat_messages WHERE user_id=? ORDER BY id DESC LIMIT ?",
+                           (user_id, limit)).fetchall()
+    return [dict(r) for r in reversed(rows)]
+
+
+def clear_chat_history(user_id: int) -> None:
+    with db.session() as con:
+        con.execute("DELETE FROM chat_messages WHERE user_id=?", (user_id,))
+
+
+def log_ai_usage(user_id: int, model: str, input_tokens: int, output_tokens: int, cost_usd: float) -> None:
+    with db.session() as con:
+        con.execute("INSERT INTO ai_usage(ts, user_id, model, input_tokens, output_tokens, cost_usd) VALUES(?,?,?,?,?,?)",
+                    (db.now_utc(), user_id, model, input_tokens, output_tokens, cost_usd))
+
+
+def month_ai_spend_usd(month: str = "") -> float:
+    """Сумма расходов на Claude за календарный месяц (по умолчанию — текущий, UTC)."""
+    month = month or datetime.now(timezone.utc).strftime("%Y-%m")
+    with db.session() as con:
+        row = con.execute("SELECT COALESCE(SUM(cost_usd), 0) s FROM ai_usage WHERE ts LIKE ?", (f"{month}-%",)).fetchone()
+    return float(row["s"])

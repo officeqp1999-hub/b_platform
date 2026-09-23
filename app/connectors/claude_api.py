@@ -10,6 +10,28 @@ REGION_HINT = ("Из России api.anthropic.com обычно закрыт. �
                "или разместите сервер за пределами РФ.")
 
 
+def classify_error(code: int, body: dict) -> str:
+    """Общая классификация ошибок Claude API — используется и здесь (проверка связи),
+    и в app/claude_core.py (чат), чтобы коды/типы ошибок Anthropic не жили в двух местах
+    и не расходились. Возвращает: auth | region | permission | rate_limit | credit | overloaded | unexpected."""
+    err_obj = (body.get("error") or {}) if isinstance(body, dict) else {}
+    etype = err_obj.get("type", "")
+    emsg = (err_obj.get("message", "") or "").lower()
+    if code == 401 or etype == "authentication_error":
+        return "auth"
+    if code == 403 or etype == "permission_error":
+        if "not allowed" in emsg or "region" in emsg or "country" in emsg or not emsg:
+            return "region"
+        return "permission"
+    if code == 429 or etype == "rate_limit_error":
+        return "rate_limit"
+    if "credit balance" in emsg:
+        return "credit"
+    if code in (500, 502, 503, 529):
+        return "overloaded"
+    return "unexpected"
+
+
 def _normalize(cfg: dict) -> dict:
     if cfg.get("base_url"):
         cfg["base_url"] = cfg["base_url"].rstrip("/")
@@ -51,9 +73,6 @@ async def check(cfg: dict, ctx: Ctx) -> CheckResult:
         body = resp.json()
     except ValueError:
         body = {}
-    etype = (body.get("error") or {}).get("type", "") if isinstance(body, dict) else ""
-    emsg = ((body.get("error") or {}).get("message", "") if isinstance(body, dict) else "") or ""
-
     if code == 200:
         ids = [m.get("id", "") for m in body.get("data", [])] if isinstance(body, dict) else []
         lim = cfg.get("monthly_limit_usd", "")
@@ -66,18 +85,19 @@ async def check(cfg: dict, ctx: Ctx) -> CheckResult:
                  models=len(ids))
         res.elapsed_ms = elapsed
         return res
-    if code == 401 or etype == "authentication_error":
+    kind = classify_error(code, body)
+    if kind == "auth":
         return err("Ключ API неверный или удалён.",
                    "В console.anthropic.com → API Keys создайте новый ключ и вставьте его здесь целиком (начинается с sk-ant-).")
-    if code == 403 or etype == "permission_error":
-        if "not allowed" in emsg.lower() or "region" in emsg.lower() or "country" in emsg.lower() or not emsg:
-            return err("Claude не пускает запросы с этого сервера (ограничение по стране/адресу).", REGION_HINT)
+    if kind == "region":
+        return err("Claude не пускает запросы с этого сервера (ограничение по стране/адресу).", REGION_HINT)
+    if kind == "permission":
         return err("У ключа нет прав на этот запрос.", "Создайте ключ в console.anthropic.com в нужной рабочей области (Workspace).")
-    if code == 429 or etype == "rate_limit_error":
+    if kind == "rate_limit":
         return warn("Claude просит подождать: превышен лимит запросов.", "Это временно. Повторите через минуту; если постоянно — поднимите лимиты в консоли Anthropic.")
-    if "credit balance" in emsg.lower():
+    if kind == "credit":
         return err("На счёте Anthropic закончились деньги.", "Пополните баланс в console.anthropic.com → Plans & Billing.")
-    if code in (500, 502, 503, 529):
+    if kind == "overloaded":
         return warn("Claude сейчас перегружен или недоступен (сбой на стороне Anthropic).", "Повторите проверку через несколько минут. Статус: status.anthropic.com.")
     if code == 404:
         return err("По этому адресу нет Claude API.", "Уберите поле «Адрес API» (дополнительно) или впишите https://api.anthropic.com.")

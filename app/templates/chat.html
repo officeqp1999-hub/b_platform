@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m with context %}
+{% block title %}Спросить Claude{% endblock %}
+{% block content %}
+<div class="page-head"><div>
+  <h1>Спросить Claude</h1>
+  <p>Задайте вопрос по данным компании. Отвечает по тому, что вам разрешено видеть по вашей роли.</p>
+</div></div>
+
+{% if not claude_connected %}
+<div class="card">
+  <p class="muted">Ядро Claude ещё не подключено.
+    {% if can('connections.manage') %}<a href="/connections/new/claude">Подключить</a> в разделе «Подключения».{% else %}Обратитесь к администратору.{% endif %}</p>
+</div>
+{% else %}
+
+{% if spend %}
+<p class="small muted">Расходы на Claude в этом месяце: {{ '$%.2f'|format(spend.spent) }}{% if spend.limit %} из {{ '$%.2f'|format(spend.limit) }}{% endif %}.</p>
+{% endif %}
+
+<div class="card">
+  {% if history %}
+  <div class="chat-log">
+    {% for msg in history %}
+    <div class="chat-msg {{ msg.role }}">
+      <div class="chat-role">{{ 'Вы' if msg.role == 'user' else 'Claude' }}</div>
+      <div class="chat-text">{{ msg.content }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">Пока пусто. Задайте первый вопрос — например, «сколько денег на счетах?».</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <form method="post" action="/chat/ask" accept-charset="utf-8" data-busy="1">
+    {{ m.csrf_field() }}
+    <div class="field">
+      <label for="question">Вопрос</label>
+      <textarea id="question" name="question" rows="3" required autofocus placeholder="Например: сколько выручки за месяц?"></textarea>
+    </div>
+    <div class="form-actions"><button class="btn primary" type="submit" data-busy-label="Спрашиваю Claude…">Спросить</button></div>
+  </form>
+  {% if history %}
+  <form method="post" action="/chat/clear" accept-charset="utf-8" data-confirm="Очистить историю переписки? Это нельзя отменить." class="mt-s">
+    {{ m.csrf_field() }}
+    <button class="btn small" type="submit">Очистить историю</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}
